@@ -1,0 +1,466 @@
+# This workflow will build, package, and remotely deploy
+# an ASP.NET application to IIS using Microsoft Web Deploy.
+
+name: Web Deploy - Remote
+
+on:
+  push:
+    branches: ["main"]
+    paths-ignore:
+      - .github/**
+  workflow_dispatch:
+
+jobs:
+
+  # ============================================================
+  # BUILD AND CREATE WEB DEPLOY PACKAGE
+  # ============================================================
+  build:
+    name: Build and Create Web Deploy Package
+
+    runs-on: self-hosted
+
+    environment: Development
+
+    env:
+      SITE_NAME: ${{ vars.SITE_NAME }}
+      APP_NAME: ${{ vars.APP_NAME }}
+      PHYSICAL_PATH: ${{ vars.PHYSICAL_PATH }}
+      APP_POOL_NAME: ${{ vars.APP_POOL_NAME }}
+
+      SOLUTION: AspNetWeb.slnx
+      WEB_PROJECT: AspNetWeb
+      WEB_PROJECT_FILE: AspNetWeb/AspNetWeb.csproj
+
+      BUILD_CONFIGURATION: Debug
+
+      PACKAGE_DIR: ${{ github.workspace }}\webdeploy
+      PACKAGE_FILE: ${{ github.workspace }}\webdeploy\AspNetWeb.zip
+
+    steps:
+
+      # ==========================================================
+      # BUILD INFORMATION
+      # ==========================================================
+      - name: Show Build Info
+        shell: powershell
+        run: |
+          Write-Host "========================================"
+          Write-Host "Build Information"
+          Write-Host "========================================"
+          Write-Host "Branch:          ${{ github.ref }}"
+          Write-Host "Commit:          ${{ github.sha }}"
+          Write-Host "Runner:          ${{ runner.name }}"
+          Write-Host "Environment:     Development"
+          Write-Host "Application:     $env:APP_NAME"
+          Write-Host "Configuration:   $env:BUILD_CONFIGURATION"
+          Write-Host "========================================"
+
+      # ==========================================================
+      # CHECKOUT
+      # ==========================================================
+      - name: Checkout source
+        uses: actions/checkout@v5
+
+      # ==========================================================
+      # SETUP MSBUILD
+      # ==========================================================
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v3
+
+      # ==========================================================
+      # SETUP NUGET
+      # ==========================================================
+      - name: Setup NuGet
+        uses: NuGet/setup-nuget@v2
+
+      # ==========================================================
+      # VERIFY WEB DEPLOY
+      # ==========================================================
+      - name: Verify Web Deploy
+        shell: powershell
+        run: |
+          $msdeploy = "${env:ProgramFiles}\IIS\Microsoft Web Deploy V3\msdeploy.exe"
+
+          if (-not (Test-Path $msdeploy)) {
+              Write-Error "Web Deploy was not found at:"
+              Write-Error $msdeploy
+              exit 1
+          }
+
+          Write-Host "Web Deploy found:"
+          Write-Host $msdeploy
+
+      # ==========================================================
+      # RESTORE NUGET
+      # ==========================================================
+      - name: Restore NuGet packages
+        shell: powershell
+        run: |
+          Write-Host "Restoring NuGet packages..."
+
+          nuget restore $env:SOLUTION
+
+          if ($LASTEXITCODE -ne 0) {
+              Write-Error "NuGet restore failed."
+              exit 1
+          }
+
+          Write-Host "NuGet restore completed successfully."
+
+      # ==========================================================
+      # PREPARE PACKAGE DIRECTORY
+      # ==========================================================
+      - name: Prepare Web Deploy Package Directory
+        shell: powershell
+        run: |
+
+          if (Test-Path $env:PACKAGE_DIR) {
+              Write-Host "Removing existing package directory..."
+
+              Remove-Item `
+                -Path $env:PACKAGE_DIR `
+                -Recurse `
+                -Force
+          }
+
+          New-Item `
+            -ItemType Directory `
+            -Path $env:PACKAGE_DIR `
+            -Force | Out-Null
+
+          Write-Host "Package directory:"
+          Write-Host $env:PACKAGE_DIR
+
+      # ==========================================================
+      # BUILD AND CREATE WEB DEPLOY PACKAGE
+      # ==========================================================
+      - name: Build and Create Web Deploy Package
+        shell: powershell
+        run: |
+
+          Write-Host "========================================"
+          Write-Host "Creating Web Deploy Package"
+          Write-Host "========================================"
+
+          msbuild $env:WEB_PROJECT_FILE `
+            /p:Configuration=$env:BUILD_CONFIGURATION `
+            /p:DeployOnBuild=true `
+            /p:WebPublishMethod=Package `
+            /p:PackageAsSingleFile=true `
+            /p:PackageLocation="$env:PACKAGE_FILE" `
+            /p:SkipInvalidConfigurations=true
+
+          if ($LASTEXITCODE -ne 0) {
+              Write-Error "MSBuild failed."
+              exit 1
+          }
+
+          if (-not (Test-Path $env:PACKAGE_FILE)) {
+              Write-Error "Web Deploy package was not created:"
+              Write-Error $env:PACKAGE_FILE
+              exit 1
+          }
+
+          Write-Host ""
+          Write-Host "Web Deploy package created successfully:"
+          Write-Host $env:PACKAGE_FILE
+
+          Get-Item $env:PACKAGE_FILE |
+            Select-Object FullName, Length, LastWriteTime
+
+      # ==========================================================
+      # SHOW PACKAGE
+      # ==========================================================
+      - name: Show Package
+        shell: powershell
+        run: |
+
+          Write-Host "Package directory contents:"
+
+          Get-ChildItem `
+            -Path $env:PACKAGE_DIR `
+            -Recurse |
+            Select-Object FullName, Length
+
+      # ==========================================================
+      # UPLOAD GITHUB ARTIFACT
+      # ==========================================================
+      - name: Upload Web Deploy Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: aspnet-webapp
+          path: ${{ env.PACKAGE_FILE }}
+          if-no-files-found: error
+          retention-days: 7
+
+
+  # ============================================================
+  # REMOTE DEPLOY TO IIS
+  # ============================================================
+  deploy:
+    name: Remote Deploy to IIS
+
+    needs: build
+
+    runs-on: self-hosted
+
+    environment: Development
+
+    env:
+      IIS_SERVER: ${{ vars.IIS_SERVER }}
+
+      SITE_NAME: ${{ vars.SITE_NAME }}
+      APP_NAME: ${{ vars.APP_NAME }}
+      PHYSICAL_PATH: ${{ vars.PHYSICAL_PATH }}
+      APP_POOL_NAME: ${{ vars.APP_POOL_NAME }}
+
+    steps:
+
+      # ==========================================================
+      # SHOW DEPLOYMENT INFORMATION
+      # ==========================================================
+      - name: Show Deployment Info
+        shell: powershell
+        run: |
+
+          Write-Host "========================================"
+          Write-Host "Remote Deployment Information"
+          Write-Host "========================================"
+          Write-Host "Branch:          ${{ github.ref }}"
+          Write-Host "Commit:          ${{ github.sha }}"
+          Write-Host "Runner:          ${{ runner.name }}"
+          Write-Host "Environment:     Development"
+          Write-Host "IIS Server:      $env:IIS_SERVER"
+          Write-Host "Site:            $env:SITE_NAME"
+          Write-Host "Application:     $env:APP_NAME"
+          Write-Host "Physical Path:   $env:PHYSICAL_PATH"
+          Write-Host "App Pool:        $env:APP_POOL_NAME"
+          Write-Host "========================================"
+
+      # ==========================================================
+      # VALIDATE IIS SERVER VARIABLE
+      # ==========================================================
+      - name: Validate IIS Server
+        shell: powershell
+        run: |
+
+          if ([string]::IsNullOrWhiteSpace($env:IIS_SERVER)) {
+              Write-Error "IIS_SERVER is not configured."
+              exit 1
+          }
+
+          Write-Host "Remote IIS server:"
+          Write-Host $env:IIS_SERVER
+
+      # ==========================================================
+      # VERIFY REMOTE WEB DEPLOY PORT
+      # ==========================================================
+      - name: Test Web Deploy Connection
+        shell: powershell
+        run: |
+
+          Write-Host "Testing connection to:"
+          Write-Host "$env:IIS_SERVER`:8172"
+
+          $result = Test-NetConnection `
+            -ComputerName $env:IIS_SERVER `
+            -Port 8172 `
+            -InformationLevel Quiet
+
+          if (-not $result) {
+              Write-Error `
+                "Cannot connect to Web Deploy on $env:IIS_SERVER`:8172."
+
+              exit 1
+          }
+
+          Write-Host "TCP 8172 connection successful."
+
+      # ==========================================================
+      # VERIFY LOCAL WEB DEPLOY
+      # ==========================================================
+      - name: Verify Web Deploy
+        shell: powershell
+        run: |
+
+          $msdeploy = "${env:ProgramFiles}\IIS\Microsoft Web Deploy V3\msdeploy.exe"
+
+          if (-not (Test-Path $msdeploy)) {
+              Write-Error "Web Deploy was not found at:"
+              Write-Error $msdeploy
+              exit 1
+          }
+
+          Write-Host "Web Deploy found:"
+          Write-Host $msdeploy
+
+      # ==========================================================
+      # DOWNLOAD BUILD ARTIFACT
+      # ==========================================================
+      - name: Download Web Deploy Artifact
+        uses: actions/download-artifact@v5
+        with:
+          name: aspnet-webapp
+          path: deploy-package
+
+      # ==========================================================
+      # LOCATE PACKAGE
+      # ==========================================================
+      - name: Locate Web Deploy Package
+        shell: powershell
+        run: |
+
+          $package = Get-ChildItem `
+            -Path "$env:GITHUB_WORKSPACE\deploy-package" `
+            -Filter "*.zip" `
+            -File |
+            Select-Object -First 1
+
+          if ($null -eq $package) {
+              Write-Error "Web Deploy package was not found."
+              exit 1
+          }
+
+          Write-Host "Web Deploy package:"
+          Write-Host $package.FullName
+
+          "PACKAGE_PATH=$($package.FullName)" |
+            Out-File `
+              -FilePath $env:GITHUB_ENV `
+              -Encoding utf8 `
+              -Append
+
+      # ==========================================================
+      # DEPLOY USING REMOTE WEB DEPLOY
+      # ==========================================================
+      - name: Deploy Using Remote Web Deploy
+        shell: powershell
+        run: |
+
+          $msdeploy = "${env:ProgramFiles}\IIS\Microsoft Web Deploy V3\msdeploy.exe"
+
+          if (-not (Test-Path $msdeploy)) {
+              Write-Error "Web Deploy was not found:"
+              Write-Error $msdeploy
+              exit 1
+          }
+
+          if (-not (Test-Path $env:PACKAGE_PATH)) {
+              Write-Error "Package does not exist:"
+              Write-Error $env:PACKAGE_PATH
+              exit 1
+          }
+
+          Write-Host "========================================"
+          Write-Host "Remote Web Deploy"
+          Write-Host "========================================"
+          Write-Host "Server:          $env:IIS_SERVER"
+          Write-Host "Package:         $env:PACKAGE_PATH"
+          Write-Host "Site:            $env:SITE_NAME"
+          Write-Host "Application:     $env:APP_NAME"
+          Write-Host "========================================"
+
+          # ------------------------------------------------------
+          # IIS application path
+          #
+          # Example:
+          #
+          # Default Web Site/tools/AspnetDemo
+          #
+          # ------------------------------------------------------
+
+          $iisApplication = "$env:SITE_NAME/$env:APP_NAME"
+
+          Write-Host "IIS Application:"
+          Write-Host $iisApplication
+
+          # ------------------------------------------------------
+          # Remote Web Deploy endpoint
+          #
+          # Web Deploy Handler:
+          #
+          # https://SERVER:8172/msdeploy.axd
+          #
+          # NTLM uses the Windows/domain identity running
+          # the GitHub Actions runner.
+          # ------------------------------------------------------
+
+          $remoteEndpoint = `
+            "https://$env:IIS_SERVER`:8172/msdeploy.axd"
+
+          Write-Host "Remote endpoint:"
+          Write-Host $remoteEndpoint
+
+          # ------------------------------------------------------
+          # IMPORTANT:
+          #
+          # Start-Process is used here because msdeploy.exe is
+          # a native Windows executable and PowerShell's native
+          # argument quoting can incorrectly pass quotes as
+          # literal characters.
+          # ------------------------------------------------------
+
+          $arguments = `
+            "-verb:sync " +
+            "-source:package=`"$env:PACKAGE_PATH`" " +
+            "-dest:auto,computerName=`"$remoteEndpoint`",authType=NTLM,allowUntrusted=true " +
+            "-setParam:name=`"IIS Web Application Name`",value=`"$iisApplication`" " +
+            "-enableRule:AppOffline"
+
+          Write-Host ""
+          Write-Host "Executing Web Deploy..."
+          Write-Host ""
+
+          Write-Host $msdeploy
+          Write-Host $arguments
+          Write-Host ""
+
+          $process = Start-Process `
+            -FilePath $msdeploy `
+            -ArgumentList $arguments `
+            -Wait `
+            -PassThru `
+            -NoNewWindow
+
+          if ($process.ExitCode -ne 0) {
+
+              Write-Error `
+                "Remote Web Deploy failed with exit code $($process.ExitCode)."
+
+              exit $process.ExitCode
+          }
+
+          Write-Host ""
+          Write-Host "========================================"
+          Write-Host "Remote Web Deploy completed successfully."
+          Write-Host "========================================"
+
+      # ==========================================================
+      # VERIFY REMOTE DEPLOYMENT
+      # ==========================================================
+      - name: Verify Remote Deployment
+        shell: powershell
+        run: |
+
+          Write-Host "========================================"
+          Write-Host "Remote Deployment Verification"
+          Write-Host "========================================"
+
+          Write-Host "Server:"
+          Write-Host $env:IIS_SERVER
+
+          Write-Host ""
+          Write-Host "Application:"
+          Write-Host "$env:SITE_NAME/$env:APP_NAME"
+
+          Write-Host ""
+          Write-Host "Web Deploy endpoint:"
+          Write-Host "https://$env:IIS_SERVER`:8172/msdeploy.axd"
+
+          Write-Host ""
+          Write-Host "Remote Web Deploy completed."
+
+          Write-Host "========================================"
+          Write-Host "Deployment successful."
+          Write-Host "========================================"

@@ -1,0 +1,558 @@
+# This workflow will build, package, and deploy an ASP.NET project to IIS
+# using Microsoft Web Deploy (MSDeploy)
+
+name: Web Deploy - Local
+
+on:
+  push:
+    branches: ["main"]
+    paths-ignore:
+      - .github/**
+  workflow_dispatch:
+
+jobs:
+
+  # ============================================================
+  # BUILD AND CREATE WEB DEPLOY PACKAGE
+  # ============================================================
+  build:
+    name: Build and Create Web Deploy Package
+    runs-on: self-hosted
+    environment: Development
+
+    env:
+      SITE_NAME: ${{ vars.SITE_NAME }}
+      APP_NAME: ${{ vars.APP_NAME }}
+      PHYSICAL_PATH: ${{ vars.PHYSICAL_PATH }}
+      APP_POOL_NAME: ${{ vars.APP_POOL_NAME }}
+
+      SOLUTION: AspNetWeb.slnx
+      WEB_PROJECT: AspNetWeb
+      WEB_PROJECT_FILE: AspNetWeb/AspNetWeb.csproj
+      BUILD_CONFIGURATION: Debug
+
+      PACKAGE_DIR: ${{ github.workspace }}\webdeploy
+      PACKAGE_FILE: ${{ github.workspace }}\webdeploy\AspNetWeb.zip
+
+    steps:
+
+      # ----------------------------------------------------------
+      # Show build information
+      # ----------------------------------------------------------
+      - name: Show Build Info
+        shell: powershell
+        run: |
+          Write-Host "========================================"
+          Write-Host "Build Information"
+          Write-Host "========================================"
+          Write-Host "Branch:       ${{ github.ref }}"
+          Write-Host "Commit:       ${{ github.sha }}"
+          Write-Host "Runner:       ${{ runner.name }}"
+          Write-Host "Environment:  Development"
+          Write-Host "Application:  $env:APP_NAME"
+          Write-Host "Configuration: $env:BUILD_CONFIGURATION"
+          Write-Host "========================================"
+
+      # ----------------------------------------------------------
+      # Checkout
+      # ----------------------------------------------------------
+      - name: Checkout source
+        uses: actions/checkout@v5
+
+      # ----------------------------------------------------------
+      # Setup MSBuild
+      # ----------------------------------------------------------
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v3
+
+      # ----------------------------------------------------------
+      # Setup NuGet
+      # ----------------------------------------------------------
+      - name: Setup NuGet
+        uses: NuGet/setup-nuget@v2
+
+      # ----------------------------------------------------------
+      # Verify Web Deploy
+      # ----------------------------------------------------------
+      - name: Verify Web Deploy
+        shell: powershell
+        run: |
+          $msdeploy = "${env:ProgramFiles}\IIS\Microsoft Web Deploy V3\msdeploy.exe"
+
+          if (-not (Test-Path $msdeploy)) {
+              Write-Error "Web Deploy was not found at: $msdeploy"
+              exit 1
+          }
+
+          Write-Host "Web Deploy found:"
+          Write-Host $msdeploy
+
+      # ----------------------------------------------------------
+      # Restore NuGet packages
+      # ----------------------------------------------------------
+      - name: Restore NuGet packages
+        shell: powershell
+        run: |
+          Write-Host "Restoring NuGet packages..."
+
+          nuget restore $env:SOLUTION
+
+          if ($LASTEXITCODE -ne 0) {
+              Write-Error "NuGet restore failed."
+              exit 1
+          }
+
+      # ----------------------------------------------------------
+      # Prepare package directory
+      # ----------------------------------------------------------
+      - name: Prepare Web Deploy Package Directory
+        shell: powershell
+        run: |
+          if (Test-Path $env:PACKAGE_DIR) {
+              Remove-Item `
+                -Path $env:PACKAGE_DIR `
+                -Recurse `
+                -Force
+          }
+
+          New-Item `
+            -ItemType Directory `
+            -Path $env:PACKAGE_DIR `
+            -Force | Out-Null
+
+          Write-Host "Package directory:"
+          Write-Host $env:PACKAGE_DIR
+
+      # ----------------------------------------------------------
+      # Build and create Web Deploy package
+      # ----------------------------------------------------------
+      - name: Build and Create Web Deploy Package
+        shell: powershell
+        run: |
+          Write-Host "========================================"
+          Write-Host "Creating Web Deploy Package"
+          Write-Host "========================================"
+
+          msbuild $env:WEB_PROJECT_FILE `
+            /p:Configuration=$env:BUILD_CONFIGURATION `
+            /p:DeployOnBuild=true `
+            /p:WebPublishMethod=Package `
+            /p:PackageAsSingleFile=true `
+            /p:PackageLocation="$env:PACKAGE_FILE" `
+            /p:SkipInvalidConfigurations=true
+
+          if ($LASTEXITCODE -ne 0) {
+              Write-Error "MSBuild failed."
+              exit 1
+          }
+
+          if (-not (Test-Path $env:PACKAGE_FILE)) {
+              Write-Error "Web Deploy package was not created: $env:PACKAGE_FILE"
+              exit 1
+          }
+
+          Write-Host ""
+          Write-Host "Web Deploy package created successfully:"
+          Write-Host $env:PACKAGE_FILE
+
+          Get-Item $env:PACKAGE_FILE |
+            Select-Object FullName, Length, LastWriteTime
+
+      # ----------------------------------------------------------
+      # Show package contents
+      # ----------------------------------------------------------
+      - name: Show Package
+        shell: powershell
+        run: |
+          Write-Host "Package:"
+          Get-ChildItem `
+            -Path $env:PACKAGE_DIR `
+            -Recurse |
+            Select-Object FullName, Length
+
+      # ----------------------------------------------------------
+      # Upload Web Deploy package
+      # ----------------------------------------------------------
+      - name: Upload Web Deploy Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: aspnet-webapp
+          path: ${{ env.PACKAGE_FILE }}
+          if-no-files-found: error
+          retention-days: 7
+
+
+  # ============================================================
+  # DEPLOY WEB DEPLOY PACKAGE TO IIS
+  # ============================================================
+  deploy:
+    name: Deploy to IIS
+    needs: build
+
+    runs-on: self-hosted
+    environment: Development
+
+    env:
+      SITE_NAME: ${{ vars.SITE_NAME }}
+      APP_NAME: ${{ vars.APP_NAME }}
+      PHYSICAL_PATH: ${{ vars.PHYSICAL_PATH }}
+      APP_POOL_NAME: ${{ vars.APP_POOL_NAME }}
+
+    steps:
+
+      # ----------------------------------------------------------
+      # Show deployment information
+      # ----------------------------------------------------------
+      - name: Show Deployment Info
+        shell: powershell
+        run: |
+          Write-Host "========================================"
+          Write-Host "Deployment Information"
+          Write-Host "========================================"
+          Write-Host "Branch:          ${{ github.ref }}"
+          Write-Host "Commit:          ${{ github.sha }}"
+          Write-Host "Runner:          ${{ runner.name }}"
+          Write-Host "Environment:     Development"
+          Write-Host "Site:            $env:SITE_NAME"
+          Write-Host "Application:     $env:APP_NAME"
+          Write-Host "Physical Path:   $env:PHYSICAL_PATH"
+          Write-Host "App Pool:        $env:APP_POOL_NAME"
+          Write-Host "========================================"
+
+      # ----------------------------------------------------------
+      # Verify Web Deploy
+      # ----------------------------------------------------------
+      - name: Verify Web Deploy
+        shell: powershell
+        run: |
+          $msdeploy = "${env:ProgramFiles}\IIS\Microsoft Web Deploy V3\msdeploy.exe"
+
+          if (-not (Test-Path $msdeploy)) {
+              Write-Error "Web Deploy was not found at: $msdeploy"
+              exit 1
+          }
+
+          Write-Host "Web Deploy found:"
+          Write-Host $msdeploy
+
+      # ----------------------------------------------------------
+      # Download artifact created by build job
+      # ----------------------------------------------------------
+      - name: Download Web Deploy Artifact
+        uses: actions/download-artifact@v5
+        with:
+          name: aspnet-webapp
+          path: deploy-package
+
+      # ----------------------------------------------------------
+      # Locate package
+      # ----------------------------------------------------------
+      - name: Locate Web Deploy Package
+        shell: powershell
+        run: |
+          $package = Get-ChildItem `
+            -Path "$env:GITHUB_WORKSPACE\deploy-package" `
+            -Filter "*.zip" `
+            -File |
+            Select-Object -First 1
+
+          if ($null -eq $package) {
+              Write-Error "Web Deploy package was not found."
+              exit 1
+          }
+
+          Write-Host "Web Deploy package:"
+          Write-Host $package.FullName
+
+          # Store package path for subsequent step
+          "PACKAGE_PATH=$($package.FullName)" |
+            Out-File `
+              -FilePath $env:GITHUB_ENV `
+              -Encoding utf8 `
+              -Append
+
+      # ----------------------------------------------------------
+      # Configure IIS Application Pool
+      # ----------------------------------------------------------
+      - name: Configure IIS Application Pool
+        shell: powershell
+        run: |
+          Import-Module WebAdministration
+
+          $appPool = $env:APP_POOL_NAME
+
+          Write-Host "Configuring IIS Application Pool: $appPool"
+
+          # ------------------------------------------------------
+          # Create Application Pool if necessary
+          # ------------------------------------------------------
+          if (-not (Test-Path "IIS:\AppPools\$appPool")) {
+
+              Write-Host "Creating Application Pool: $appPool"
+
+              New-WebAppPool -Name $appPool
+          }
+
+          # ------------------------------------------------------
+          # Configure Start Mode
+          # ------------------------------------------------------
+          Set-ItemProperty `
+            "IIS:\AppPools\$appPool" `
+            -Name startMode `
+            -Value AlwaysRunning
+
+          Write-Host "StartMode: AlwaysRunning"
+
+          # ------------------------------------------------------
+          # Clear existing scheduled recycle times
+          # ------------------------------------------------------
+          Clear-ItemProperty `
+            "IIS:\AppPools\$appPool" `
+            -Name recycling.periodicRestart.schedule `
+            -ErrorAction SilentlyContinue
+
+          # ------------------------------------------------------
+          # Disable regular time-interval recycling
+          # ------------------------------------------------------
+          Set-ItemProperty `
+            "IIS:\AppPools\$appPool" `
+            -Name recycling.periodicRestart.time `
+            -Value "00:00:00"
+
+          Write-Host "Regular time-interval recycling disabled"
+
+          # ------------------------------------------------------
+          # Schedule recycle at midnight
+          # ------------------------------------------------------
+          New-ItemProperty `
+            "IIS:\AppPools\$appPool" `
+            -Name recycling.periodicRestart.schedule `
+            -Value @{value = "00:00:00"} `
+            -Force
+
+          Write-Host "Recycling scheduled at 12:00 AM"
+
+      # ----------------------------------------------------------
+      # Make sure IIS application exists
+      # ----------------------------------------------------------
+      - name: Configure IIS Application
+        shell: powershell
+        run: |
+          Import-Module WebAdministration
+
+          $site = $env:SITE_NAME
+          $appName = $env:APP_NAME
+          $appPool = $env:APP_POOL_NAME
+          $physicalPath = $env:PHYSICAL_PATH
+
+          Write-Host "Checking IIS application..."
+
+          # ------------------------------------------------------
+          # Verify IIS site
+          # ------------------------------------------------------
+          if (-not (Test-Path "IIS:\Sites\$site")) {
+              Write-Error "IIS site '$site' does not exist."
+              exit 1
+          }
+
+          # ------------------------------------------------------
+          # Create physical directory if necessary
+          # ------------------------------------------------------
+          if (-not (Test-Path $physicalPath)) {
+
+              Write-Host "Creating physical directory:"
+              Write-Host $physicalPath
+
+              New-Item `
+                -ItemType Directory `
+                -Path $physicalPath `
+                -Force | Out-Null
+          }
+
+          # ------------------------------------------------------
+          # Create IIS application if necessary
+          # ------------------------------------------------------
+          if (-not (Test-Path "IIS:\Sites\$site\$appName")) {
+
+              Write-Host "Creating IIS application: $appName"
+
+              New-WebApplication `
+                -Site $site `
+                -Name $appName `
+                -PhysicalPath $physicalPath `
+                -ApplicationPool $appPool
+          }
+          else {
+
+              Write-Host "IIS application already exists."
+
+              Set-ItemProperty `
+                "IIS:\Sites\$site\$appName" `
+                -Name applicationPool `
+                -Value $appPool
+
+              Set-ItemProperty `
+                "IIS:\Sites\$site\$appName" `
+                -Name physicalPath `
+                -Value $physicalPath
+          }
+
+      # ----------------------------------------------------------
+      # Deploy using Web Deploy
+      # ----------------------------------------------------------
+      - name: Deploy Using Web Deploy
+        shell: powershell
+        run: |
+          $msdeploy = "${env:ProgramFiles}\IIS\Microsoft Web Deploy V3\msdeploy.exe"
+
+          if (-not (Test-Path $msdeploy)) {
+              Write-Error "Web Deploy was not found at: $msdeploy"
+              exit 1
+          }
+
+          Write-Host "========================================"
+          Write-Host "Web Deploy"
+          Write-Host "========================================"
+          Write-Host "Package:       $env:PACKAGE_PATH"
+          Write-Host "Site:          $env:SITE_NAME"
+          Write-Host "Application:   $env:APP_NAME"
+          Write-Host "Physical Path: $env:PHYSICAL_PATH"
+          Write-Host "========================================"
+
+          if (-not (Test-Path $env:PACKAGE_PATH)) {
+              Write-Error "Web Deploy package does not exist:"
+              Write-Error $env:PACKAGE_PATH
+              exit 1
+          }
+
+          # IIS application path
+          $iisApplication = "$env:SITE_NAME/$env:APP_NAME"
+
+          Write-Host "IIS Application: $iisApplication"
+
+          # ------------------------------------------------------
+          # Build MSDeploy command line
+          #
+          # IMPORTANT:
+          # Do not put quotes around the entire -setParam argument.
+          # Only the values that contain spaces are quoted.
+          # ------------------------------------------------------
+
+          $arguments = @(
+              '-verb:sync'
+              "-source:package=`"$env:PACKAGE_PATH`""
+              '-dest:auto'
+              "-setParam:name=`"IIS Web Application Name`",value=`"$iisApplication`""
+              '-enableRule:AppOffline'
+          ) -join ' '
+
+          Write-Host ""
+          Write-Host "Running Web Deploy:"
+          Write-Host $msdeploy
+          Write-Host $arguments
+          Write-Host ""
+
+          $process = Start-Process `
+              -FilePath $msdeploy `
+              -ArgumentList $arguments `
+              -Wait `
+              -PassThru `
+              -NoNewWindow
+
+          if ($process.ExitCode -ne 0) {
+              Write-Error "Web Deploy failed with exit code $($process.ExitCode)."
+              exit $process.ExitCode
+          }
+
+          Write-Host ""
+          Write-Host "========================================"
+          Write-Host "Web Deploy completed successfully."
+          Write-Host "========================================"
+
+      # ----------------------------------------------------------
+      # Start Application Pool
+      # ----------------------------------------------------------
+      - name: Start IIS Application Pool
+        shell: powershell
+        run: |
+          Import-Module WebAdministration
+
+          $appPool = $env:APP_POOL_NAME
+
+          Write-Host "Starting Application Pool: $appPool"
+
+          $state = (Get-WebAppPoolState -Name $appPool).Value
+
+          Write-Host "Current state: $state"
+
+          if ($state -ne "Started") {
+              Start-WebAppPool -Name $appPool
+          }
+
+          Start-Sleep -Seconds 3
+
+          $state = (Get-WebAppPoolState -Name $appPool).Value
+
+          Write-Host "Application Pool State: $state"
+
+          if ($state -ne "Started") {
+              Write-Error "IIS Application Pool '$appPool' failed to start."
+              exit 1
+          }
+
+      # ----------------------------------------------------------
+      # Verify IIS deployment
+      # ----------------------------------------------------------
+      - name: Verify IIS Deployment
+        shell: powershell
+        run: |
+          Import-Module WebAdministration
+
+          $site = $env:SITE_NAME
+          $appName = $env:APP_NAME
+          $appPool = $env:APP_POOL_NAME
+          $physicalPath = $env:PHYSICAL_PATH
+
+          Write-Host "========================================"
+          Write-Host "Deployment Verification"
+          Write-Host "========================================"
+
+          # Verify application
+          if (-not (Test-Path "IIS:\Sites\$site\$appName")) {
+              Write-Error "IIS application '$site/$appName' was not found."
+              exit 1
+          }
+
+          Write-Host "IIS Application: OK"
+
+          # Verify application pool
+          $state = (Get-WebAppPoolState -Name $appPool).Value
+
+          if ($state -ne "Started") {
+              Write-Error "Application Pool '$appPool' is not running."
+              exit 1
+          }
+
+          Write-Host "Application Pool: OK"
+
+          # Verify physical path
+          if (-not (Test-Path $physicalPath)) {
+              Write-Error "Physical path does not exist: $physicalPath"
+              exit 1
+          }
+
+          Write-Host "Physical Path: OK"
+
+          # Display deployed files
+          Write-Host ""
+          Write-Host "Deployed files:"
+
+          Get-ChildItem `
+            -Path $physicalPath `
+            -Recurse |
+            Select-Object FullName
+
+          Write-Host ""
+          Write-Host "========================================"
+          Write-Host "IIS deployment completed successfully."
+          Write-Host "========================================"

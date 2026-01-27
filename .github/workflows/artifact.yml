@@ -1,0 +1,278 @@
+# This workflow will build, package, and deploy an ASP.NET project to IIS
+
+name: Artifact
+
+on:
+  push:
+    branches: ["main"]
+    paths-ignore:
+      - .github/**
+  workflow_dispatch:
+
+jobs:
+
+  # ============================================================
+  # BUILD AND CREATE ARTIFACT
+  # ============================================================
+  build:
+    name: Build and Create Artifact
+    runs-on: self-hosted
+    environment: Development
+
+    env:
+      SITE_NAME: ${{ vars.SITE_NAME }}
+      APP_NAME: ${{ vars.APP_NAME }}
+      PHYSICAL_PATH: ${{ vars.PHYSICAL_PATH }}
+      APP_POOL_NAME: ${{ vars.APP_POOL_NAME }}
+
+      SOLUTION: AspNetWeb.slnx
+      WEB_PROJECT: AspNetWeb
+      WEB_PROJECT_FILE: AspNetWeb/AspNetWeb.csproj
+      BUILD_CONFIGURATION: Debug
+
+    steps:
+
+      - name: Show Build Info
+        shell: powershell
+        run: |
+          Write-Host "Branch: ${{ github.ref }}"
+          Write-Host "Commit: ${{ github.sha }}"
+          Write-Host "Runner: ${{ runner.name }}"
+          Write-Host "Environment: Development"
+          Write-Host "Application: $env:APP_NAME"
+
+      - name: Checkout source
+        uses: actions/checkout@v5
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v3
+
+      - name: Setup NuGet
+        uses: NuGet/setup-nuget@v2
+
+      - name: Restore NuGet packages
+        shell: powershell
+        run: |
+          nuget restore $env:SOLUTION
+
+      - name: Build and Publish
+        shell: powershell
+        run: |
+          msbuild $env:WEB_PROJECT_FILE `
+            /p:Configuration=$env:BUILD_CONFIGURATION `
+            /p:DeployOnBuild=true `
+            /p:PublishProfile="FolderProfile" `
+            /p:PublishUrl="publish"
+
+      - name: Show Published Files
+        shell: powershell
+        run: |
+          Write-Host "Published files:"
+          Get-ChildItem "$env:WEB_PROJECT\publish" -Recurse |
+            Select-Object FullName
+
+      # Create GitHub Actions artifact
+      - name: Upload Web Application Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: aspnet-webapp
+          path: ${{ env.WEB_PROJECT }}/publish
+          if-no-files-found: error
+          retention-days: 7
+
+
+  # ============================================================
+  # DEPLOY ARTIFACT TO IIS
+  # ============================================================
+  deploy:
+    name: Deploy to IIS
+    needs: build
+
+    runs-on: self-hosted
+    environment: Development
+
+    env:
+      SITE_NAME: ${{ vars.SITE_NAME }}
+      APP_NAME: ${{ vars.APP_NAME }}
+      PHYSICAL_PATH: ${{ vars.PHYSICAL_PATH }}
+      APP_POOL_NAME: ${{ vars.APP_POOL_NAME }}
+
+    steps:
+
+      - name: Show Deployment Info
+        shell: powershell
+        run: |
+          Write-Host "Branch: ${{ github.ref }}"
+          Write-Host "Commit: ${{ github.sha }}"
+          Write-Host "Runner: ${{ runner.name }}"
+          Write-Host "Environment: Development"
+          Write-Host "Application: $env:APP_NAME"
+          Write-Host "Physical Path: $env:PHYSICAL_PATH"
+          Write-Host "App Pool: $env:APP_POOL_NAME"
+
+      # Download the exact artifact created by the build job
+      - name: Download Web Application Artifact
+        uses: actions/download-artifact@v5
+        with:
+          name: aspnet-webapp
+          path: publish
+
+      - name: Deploy to IIS
+        shell: powershell
+        run: |
+          Import-Module WebAdministration
+
+          $appPool = $env:APP_POOL_NAME
+          $site = $env:SITE_NAME
+          $appName = $env:APP_NAME
+          $publishPath = $env:PHYSICAL_PATH
+          $artifactPath = Join-Path $env:GITHUB_WORKSPACE "publish"
+
+          Write-Host "========================================"
+          Write-Host "IIS Deployment"
+          Write-Host "========================================"
+          Write-Host "Site:           $site"
+          Write-Host "Application:    $appName"
+          Write-Host "App Pool:       $appPool"
+          Write-Host "Physical Path:  $publishPath"
+          Write-Host "Artifact Path:  $artifactPath"
+          Write-Host "========================================"
+
+          # ----------------------------------------------------
+          # Create physical directory if it does not exist
+          # ----------------------------------------------------
+          if (-not (Test-Path $publishPath)) {
+              Write-Host "Creating directory: $publishPath"
+
+              New-Item `
+                -ItemType Directory `
+                -Path $publishPath `
+                -Force | Out-Null
+          }
+
+          # ----------------------------------------------------
+          # Create Application Pool if it does not exist
+          # ----------------------------------------------------
+          if (-not (Test-Path "IIS:\AppPools\$appPool")) {
+
+              Write-Host "Creating IIS Application Pool: $appPool"
+
+              New-WebAppPool -Name $appPool
+          }
+
+          # ----------------------------------------------------
+          # Stop Application Pool
+          # ----------------------------------------------------
+          Write-Host "Stopping IIS Application Pool: $appPool"
+
+          if ((Get-WebAppPoolState -Name $appPool).Value -eq "Started") {
+              Stop-WebAppPool -Name $appPool
+          }
+
+          # ----------------------------------------------------
+          # Configure Application Pool
+          # ----------------------------------------------------
+          Set-ItemProperty `
+            "IIS:\AppPools\$appPool" `
+            -Name startMode `
+            -Value AlwaysRunning
+
+          Write-Host "StartMode set to AlwaysRunning"
+
+          # Clear existing scheduled recycle times
+          Clear-ItemProperty `
+            "IIS:\AppPools\$appPool" `
+            -Name recycling.periodicRestart.schedule
+
+          # Disable regular time-interval recycling
+          Set-ItemProperty `
+            "IIS:\AppPools\$appPool" `
+            -Name recycling.periodicRestart.time `
+            -Value "00:00:00"
+
+          Write-Host "Regular time interval recycling disabled"
+
+          # Add 12:00 AM recycle time
+          New-ItemProperty `
+            "IIS:\AppPools\$appPool" `
+            -Name recycling.periodicRestart.schedule `
+            -Value @{value = "00:00:00"} `
+            -Force
+
+          Write-Host "Recycling scheduled at 12:00 AM"
+
+          # ----------------------------------------------------
+          # Deploy artifact
+          # ----------------------------------------------------
+          Write-Host "Removing old application files..."
+
+          Get-ChildItem `
+            -Path $publishPath `
+            -Force |
+            Remove-Item `
+              -Recurse `
+              -Force
+
+          Write-Host "Copying artifact to IIS..."
+
+          Copy-Item `
+            -Path "$artifactPath\*" `
+            -Destination $publishPath `
+            -Recurse `
+            -Force
+
+          Write-Host "Application files copied successfully."
+
+          # ----------------------------------------------------
+          # Create IIS Web Application if necessary
+          # ----------------------------------------------------
+          if (-not (Test-Path "IIS:\Sites\$site\$appName")) {
+
+              Write-Host "Creating IIS application: $appName"
+
+              New-WebApplication `
+                -Site $site `
+                -Name $appName `
+                -PhysicalPath $publishPath `
+                -ApplicationPool $appPool
+
+          }
+          else {
+
+              Write-Host "IIS application '$appName' already exists."
+
+              # Make sure the existing application points to
+              # the expected application pool and physical path
+              Set-ItemProperty `
+                "IIS:\Sites\$site\$appName" `
+                -Name applicationPool `
+                -Value $appPool
+
+              Set-ItemProperty `
+                "IIS:\Sites\$site\$appName" `
+                -Name physicalPath `
+                -Value $publishPath
+          }
+
+          # ----------------------------------------------------
+          # Start Application Pool
+          # ----------------------------------------------------
+          Write-Host "Starting IIS Application Pool: $appPool"
+
+          Start-WebAppPool -Name $appPool
+
+          # ----------------------------------------------------
+          # Verify Application Pool
+          # ----------------------------------------------------
+          $state = (Get-WebAppPoolState -Name $appPool).Value
+
+          Write-Host "Application Pool State: $state"
+
+          if ($state -ne "Started") {
+              Write-Error "IIS Application Pool '$appPool' failed to start."
+              exit 1
+          }
+
+          Write-Host "========================================"
+          Write-Host "IIS deployment completed successfully."
+          Write-Host "========================================"
