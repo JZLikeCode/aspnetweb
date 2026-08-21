@@ -403,13 +403,21 @@ jobs:
           # literal characters.
           # ------------------------------------------------------
 
-          $arguments = `
-            "-verb:sync " +
-            "-source:package=`"$env:PACKAGE_PATH`" " +
-            "-dest:auto,computerName=`"$remoteEndpoint`",authType=NTLM,userName=`"$env:DEPLOY_USERNAME`",password=`"$env:DEPLOY_PASSWORD`" " +
-            "-setParam:name=`"IIS Web Application Name`",value=`"$iisApplication`" " +
-            "-enableRule:AppOffline " +
-            "-allowUntrusted"
+          userName="$env:DEPLOY_USERNAME"
+          password="$env:DEPLOY_PASSWORD"
+          Write-Host "DEPLOY_USERNAME: [$env:DEPLOY_USERNAME]"
+          Write-Host "DEPLOY_PASSWORD configured: $([string]::IsNullOrEmpty($env:DEPLOY_PASSWORD) -eq $false)"
+
+          $arguments = @(
+              "-verb:sync"
+              "-source:package=$env:PACKAGE_PATH"
+              "-dest:auto,computerName=$remoteEndpoint,authType=NTLM,userName=$env:DEPLOY_USERNAME,password=$env:DEPLOY_PASSWORD"
+              "-setParam:name=IIS Web Application Name,value=$iisApplication"
+              "-enableRule:AppOffline"
+              "-allowUntrusted"
+          )
+          
+          & $msdeploy $arguments
 
           Write-Host ""
           Write-Host "Executing Web Deploy..."
