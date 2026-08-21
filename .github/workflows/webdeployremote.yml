@@ -411,7 +411,6 @@ jobs:
               "-allowUntrusted"
           )
           
-          Write-Host "Remote endpoint: $remoteEndpoint"
           Write-Host "Username: $env:DEPLOY_USERNAME"
           Write-Host "Password configured: $([string]::IsNullOrEmpty($env:DEPLOY_PASSWORD) -eq $false)"
           
