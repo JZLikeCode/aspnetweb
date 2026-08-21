@@ -27,6 +27,8 @@ jobs:
       APP_NAME: ${{ vars.APP_NAME }}
       PHYSICAL_PATH: ${{ vars.PHYSICAL_PATH }}
       APP_POOL_NAME: ${{ vars.APP_POOL_NAME }}
+      DEPLOY_USERNAME: ${{ secrets.DEPLOY_USERNAME }}
+      DEPLOY_PASSWORD: ${{ secrets.DEPLOY_PASSWORD }}
 
       SOLUTION: AspNetWeb.slnx
       WEB_PROJECT: AspNetWeb
@@ -404,7 +406,7 @@ jobs:
           $arguments = `
             "-verb:sync " +
             "-source:package=`"$env:PACKAGE_PATH`" " +
-            "-dest:auto,computerName=`"$remoteEndpoint`",authType=NTLM " +
+            "-dest:auto,computerName=`"$remoteEndpoint`",authType=NTLM,userName=`"$env:DEPLOY_USERNAME`",password=`"$env:DEPLOY_PASSWORD`" " +
             "-setParam:name=`"IIS Web Application Name`",value=`"$iisApplication`" " +
             "-enableRule:AppOffline " +
             "-allowUntrusted"
