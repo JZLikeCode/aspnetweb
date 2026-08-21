@@ -406,7 +406,7 @@ jobs:
               "-verb:sync"
               "-source:package=$env:PACKAGE_PATH"
               "-dest:auto,computerName=$remoteEndpoint,authType=NTLM,userName=$env:DEPLOY_USERNAME,password=$env:DEPLOY_PASSWORD"
-              "-setParam:name=IIS Web Application Name,value=$iisApplication"
+              "-setParam:name=`"IIS Web Application Name`",value=`"$iisApplication`""
               "-enableRule:AppOffline"
               "-allowUntrusted"
           )
