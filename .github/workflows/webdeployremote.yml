@@ -56,6 +56,8 @@ jobs:
           Write-Host "Environment:     Development"
           Write-Host "Application:     $env:APP_NAME"
           Write-Host "Configuration:   $env:BUILD_CONFIGURATION"
+          Write-Host "DEPLOY_USERNAME is set: $(-not [string]::IsNullOrEmpty($env:DEPLOY_USERNAME))"
+          Write-Host "DEPLOY_PASSWORD is set: $(-not [string]::IsNullOrEmpty($env:DEPLOY_PASSWORD))"
           Write-Host "========================================"
 
       # ==========================================================
