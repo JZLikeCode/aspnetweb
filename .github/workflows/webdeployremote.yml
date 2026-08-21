@@ -27,8 +27,6 @@ jobs:
       APP_NAME: ${{ vars.APP_NAME }}
       PHYSICAL_PATH: ${{ vars.PHYSICAL_PATH }}
       APP_POOL_NAME: ${{ vars.APP_POOL_NAME }}
-      DEPLOY_USERNAME: ${{ secrets.DEPLOY_USERNAME }}
-      DEPLOY_PASSWORD: ${{ secrets.DEPLOY_PASSWORD }}
 
       SOLUTION: AspNetWeb.slnx
       WEB_PROJECT: AspNetWeb
@@ -56,8 +54,6 @@ jobs:
           Write-Host "Environment:     Development"
           Write-Host "Application:     $env:APP_NAME"
           Write-Host "Configuration:   $env:BUILD_CONFIGURATION"
-          Write-Host "DEPLOY_USERNAME is set: $(-not [string]::IsNullOrEmpty($env:DEPLOY_USERNAME))"
-          Write-Host "DEPLOY_PASSWORD is set: $(-not [string]::IsNullOrEmpty($env:DEPLOY_PASSWORD))"
           Write-Host "========================================"
 
       # ==========================================================
@@ -218,6 +214,8 @@ jobs:
       APP_NAME: ${{ vars.APP_NAME }}
       PHYSICAL_PATH: ${{ vars.PHYSICAL_PATH }}
       APP_POOL_NAME: ${{ vars.APP_POOL_NAME }}
+      DEPLOY_USERNAME: ${{ secrets.DEPLOY_USERNAME }}
+      DEPLOY_PASSWORD: ${{ secrets.DEPLOY_PASSWORD }}
 
     steps:
 
