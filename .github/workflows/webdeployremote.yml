@@ -402,12 +402,6 @@ jobs:
           # argument quoting can incorrectly pass quotes as
           # literal characters.
           # ------------------------------------------------------
-
-          userName="$env:DEPLOY_USERNAME"
-          password="$env:DEPLOY_PASSWORD"
-          Write-Host "DEPLOY_USERNAME: [$env:DEPLOY_USERNAME]"
-          Write-Host "DEPLOY_PASSWORD configured: $([string]::IsNullOrEmpty($env:DEPLOY_PASSWORD) -eq $false)"
-
           $arguments = @(
               "-verb:sync"
               "-source:package=$env:PACKAGE_PATH"
@@ -416,6 +410,10 @@ jobs:
               "-enableRule:AppOffline"
               "-allowUntrusted"
           )
+          
+          Write-Host "Remote endpoint: $remoteEndpoint"
+          Write-Host "Username: $env:DEPLOY_USERNAME"
+          Write-Host "Password configured: $([string]::IsNullOrEmpty($env:DEPLOY_PASSWORD) -eq $false)"
           
           & $msdeploy $arguments
 
