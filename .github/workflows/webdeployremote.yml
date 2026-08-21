@@ -404,9 +404,10 @@ jobs:
           $arguments = `
             "-verb:sync " +
             "-source:package=`"$env:PACKAGE_PATH`" " +
-            "-dest:auto,computerName=`"$remoteEndpoint`",authType=NTLM,allowUntrusted=true " +
+            "-dest:auto,computerName=`"$remoteEndpoint`",authType=NTLM " +
             "-setParam:name=`"IIS Web Application Name`",value=`"$iisApplication`" " +
-            "-enableRule:AppOffline"
+            "-enableRule:AppOffline " +
+            "-allowUntrusted"
 
           Write-Host ""
           Write-Host "Executing Web Deploy..."
