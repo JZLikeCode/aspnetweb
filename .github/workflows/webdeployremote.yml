@@ -405,7 +405,7 @@ jobs:
           $arguments = @(
               "-verb:sync"
               "-source:package=$env:PACKAGE_PATH"
-              "-dest:auto,computerName=$remoteEndpoint,authType=NTLM,userName=$env:DEPLOY_USERNAME,password=$env:DEPLOY_PASSWORD"
+              "-dest:auto,computerName=$remoteEndpoint,authType=Basic,userName=$env:DEPLOY_USERNAME,password=$env:DEPLOY_PASSWORD"
               "-setParam:name=`"IIS Web Application Name`",value=`"$iisApplication`""
               "-enableRule:AppOffline"
               "-allowUntrusted"
